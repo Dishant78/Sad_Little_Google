@@ -2,7 +2,7 @@ import requests, time, re, sqlite3
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
 
-START_URL = "https://paruluniversity.ac.in"
+START_URL = "https://example.com"
 MAX_PAGES = 50
 visited = set()
 queue = [START_URL]
