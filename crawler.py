@@ -1,91 +1,69 @@
-# crawler.py
-import requests
-import sqlite3
-import time
+import requests, time, re, sqlite3
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
 
-START_URL = "https://en.wikipedia.org/wiki/Computer_security"
-MAX_PAGES = 10
-DELAY = 1
+START_URL = "https://paruluniversity.ac.in"
+MAX_PAGES = 50
+visited = set()
+queue = [START_URL]
 
-# --- database ---
-conn = sqlite3.connect("pages.db")
+def tokenize(text):
+    return re.findall(r"[a-z]{2,}", text.lower())
+
+conn = sqlite3.connect("search.db", check_same_thread=False)
 cur = conn.cursor()
 
-cur.execute("""
-CREATE TABLE IF NOT EXISTS pages (
-    url TEXT PRIMARY KEY,
-    content TEXT
-)
-""")
-conn.commit()
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 Chrome/120.0 Safari/537.36"
+    )
+}
 
-visited = set()
+while queue and len(visited) < MAX_PAGES:
+    url = queue.pop(0)
+    if url in visited:
+        continue
 
-def same_domain(url):
-    return urlparse(url).netloc == urlparse(START_URL).netloc
-
-def crawl(url):
-    if url in visited or len(visited) >= MAX_PAGES:
-        return
-
-    visited.add(url)
     print("Crawling:", url)
+    visited.add(url)
 
     try:
-        r = requests.get(
-            url,
-            headers={
-                "User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/120.0 Safari/537.36"
-                ),
-                "Accept": "text/html",
-                "Accept-Language": "en-US,en;q=0.9",
-            },
-            timeout=10,
-            allow_redirects=True
-        )
-    except Exception as e:
-        print("Request failed:", e)
-        return
-
-    print("  status:", r.status_code)
-    print("  response length:", len(r.text))
+        r = requests.get(url, headers=HEADERS, timeout=10)
+    except:
+        continue
 
     soup = BeautifulSoup(r.content, "html.parser")
-
     text = soup.get_text(" ", strip=True)
+
     cur.execute(
-        "INSERT OR IGNORE INTO pages VALUES (?, ?)",
-        (url, text)
+        "INSERT OR REPLACE INTO pages VALUES (?, ?, ?)",
+        (url, text, time.time())
     )
+
+    words = tokenize(text)
+    freq = {}
+    for w in words:
+        freq[w] = freq.get(w, 0) + 1
+
+    for w, c in freq.items():
+        cur.execute(
+            "INSERT OR REPLACE INTO index_table VALUES (?, ?, ?)",
+            (w, url, c)
+        )
+
     conn.commit()
 
-    links = soup.find_all("a", href=True)
-    print("  found links:", len(links))
-
-    for a in links:
+    for a in soup.find_all("a", href=True):
         href = a["href"]
-
-        # Wikipedia-safe filtering
         if not href.startswith("/wiki/"):
             continue
-        if ":" in href:
+        if ":" in href or "#" in href:
             continue
-        if "#" in href:
-            continue
+        link = urljoin(url, href)
+        if urlparse(link).netloc == "en.wikipedia.org":
+            queue.append(link)
 
-        link = urljoin(url, href)   # IMPORTANT FIX
+    time.sleep(2)
 
-        if same_domain(link):
-            crawl(link)
-
-    time.sleep(DELAY)
-
-crawl(START_URL)
-conn.close()
-
-print("Done. Pages crawled:", len(visited))
+print("Crawler running finished")
